@@ -1,0 +1,39 @@
+# Builds, lints and tests Focus Island on a real Windows runner and uploads the .exe.
+# NOTE: this workflow was written but has not been executed by the author of this repository
+# snapshot (there was no Windows machine or GitHub runner available). Run it once and check.
+name: windows
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+          rustc --version
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --all-features
+      - name: Test
+        run: cargo test --locked
+      - name: Release build
+        run: cargo build --release --locked
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target\release\focus-island.exe dist\
+          Copy-Item README.md dist\
+          Get-FileHash dist\focus-island.exe -Algorithm SHA256 | Format-List
+      - uses: actions/upload-artifact@v4
+        with:
+          name: focus-island-windows-x64
+          path: dist/

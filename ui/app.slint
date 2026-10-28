@@ -1,0 +1,874 @@
+// Focus Island UI. Everything animates only when a property changes (event-driven);
+// there is no permanent animation or timer in this file.
+
+export struct TaskRow {
+    id: int,
+    title: string,
+    due: string,
+    priority: int,
+    done: bool,
+    overdue: bool,
+}
+
+// Colours come from the theme chosen in settings (set from Rust).
+export global Pal {
+    in property <color> bg: #000000;
+    in property <color> panel: #1c1c1e;
+    in property <color> fg: #ffffff;
+    in property <color> dim: #98989f;
+    in property <color> line: #2c2c2e;
+    in property <color> accent: #0a84ff;
+    in property <color> danger: #ff453a;
+    in property <color> warn: #ff9f0a;
+    in property <color> ok: #30d158;
+    in property <color> on-accent: #ffffff;
+    in property <color> on-ok: #000000;
+    in property <color> border: transparent;
+}
+
+// Keyboard shortcuts are handled in Rust so they behave identically whether or not a text
+// field has focus (a focused TextInput would otherwise swallow Esc and Ctrl+...).
+export global Nav {
+    callback escape();
+    callback shortcut(string);
+}
+
+component Press inherits Rectangle {
+    in property <string> label;
+    in property <brush> fill: Pal.panel;
+    in property <color> ink: Pal.fg;
+    in property <bool> strong: false;
+    in property <bool> enabled: true;
+    callback clicked();
+    min-height: 28px;
+    min-width: 28px;
+    border-radius: 14px;
+    background: !enabled ? transparent : ta.pressed ? fill.darker(0.25) : ta.has-hover ? fill.brighter(0.15) : fill;
+    opacity: enabled ? 1 : 0.4;
+    accessible-role: button;
+    accessible-label: label;
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    Text {
+        text: root.label;
+        color: root.ink;
+        font-size: 12px;
+        font-weight: root.strong ? 600 : 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+component IconButton inherits Rectangle {
+    in property <string> tip;
+    out property <bool> hovered: ta.has-hover;
+    in property <int> kind; // 0 menu, 1 collapse chevron, 2 close, 3 edit, 4 trash, 5 clock
+    callback clicked();
+    width: 28px;
+    height: 28px;
+    border-radius: 14px;
+    background: ta.pressed ? Pal.line : ta.has-hover ? Pal.line.with-alpha(0.7) : transparent;
+    accessible-role: button;
+    accessible-label: tip;
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    // Drawn with paths so no icon font is needed.
+    Path {
+        width: 14px;
+        height: 14px;
+        x: 7px;
+        y: 7px;
+        viewbox-width: 14;
+        viewbox-height: 14;
+        stroke: Pal.dim;
+        stroke-width: 1.6px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        fill: transparent;
+        commands: root.kind == 0 ? "M1 3.5 H13 M1 7 H13 M1 10.5 H13"
+            : root.kind == 1 ? "M2 9.5 L7 4.5 L12 9.5"
+            : root.kind == 2 ? "M3 3 L11 11 M11 3 L3 11"
+            : root.kind == 3 ? "M2 12 L2.6 9.2 L9.8 2 L12 4.2 L4.8 11.4 Z"
+            : root.kind == 5 ? "M7 1.5 A5.5 5.5 0 1 0 7.01 1.5 M7 4 V7 L9.2 8.4"
+            : "M2.5 4 H11.5 M5.5 4 V2.5 H8.5 V4 M3.8 4 L4.4 12 H9.6 L10.2 4";
+    }
+}
+
+component Check inherits Rectangle {
+    in property <bool> on;
+    in property <bool> big: false;
+    callback toggled();
+    width: 20px;
+    height: 20px;
+    border-radius: 10px;
+    border-width: 1.5px;
+    border-color: on ? Pal.ok : Pal.dim;
+    background: on ? Pal.ok : transparent;
+    accessible-role: checkbox;
+    accessible-checkable: true;
+    accessible-checked: on;
+    TouchArea { mouse-cursor: pointer; clicked => { root.toggled(); } }
+    if root.on: Path {
+        width: 10px;
+        height: 10px;
+        x: 5px;
+        y: 5px;
+        viewbox-width: 10;
+        viewbox-height: 10;
+        stroke: Pal.on-ok;
+        stroke-width: 1.8px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        fill: transparent;
+        commands: "M1.5 5.5 L4 8 L8.5 2";
+    }
+}
+
+component Toggle inherits Rectangle {
+    in-out property <bool> on;
+    in property <string> label;
+    callback toggled(bool);
+    height: 27px;
+    accessible-role: switch;
+    accessible-label: label;
+    accessible-checked: on;
+    HorizontalLayout {
+        alignment: stretch;
+        Text {
+            text: root.label;
+            color: Pal.fg;
+            font-size: 13px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        Rectangle {
+            width: 38px;
+            height: 22px;
+            y: 2px;
+            border-radius: 11px;
+            background: root.on ? Pal.ok : Pal.line;
+            animate background { duration: 120ms; }
+            Rectangle {
+                width: 18px;
+                height: 18px;
+                y: 2px;
+                x: root.on ? 18px : 2px;
+                border-radius: 9px;
+                background: #ffffff;
+                animate x { duration: 120ms; easing: ease-out; }
+            }
+        }
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.on = !root.on; root.toggled(root.on); }
+    }
+}
+
+component Field inherits Rectangle {
+    in-out property <string> text <=> input.text;
+    in property <string> placeholder;
+    in property <bool> multiline: false;
+    in property <InputType> input-type: InputType.text;
+    callback accepted();
+    callback edited(string);
+    in property <brush> fill: Pal.panel;
+    out property <bool> has-focus: input.has-focus;
+    min-height: 34px;
+    max-height: root.multiline ? 400px : 34px;
+    border-radius: 10px;
+    background: fill;
+    border-width: input.has-focus ? 1px : 0px;
+    border-color: Pal.accent;
+    accessible-role: text-input;
+    accessible-label: placeholder;
+    public function focus-field() { input.focus(); }
+    Text {
+        x: 10px;
+        text: root.placeholder;
+        color: Pal.dim;
+        font-size: 13px;
+        vertical-alignment: center;
+        visible: input.text == "";
+    }
+    input := TextInput {
+        x: 10px;
+        width: parent.width - 20px;
+        height: parent.height;
+        color: Pal.fg;
+        font-size: 13px;
+        vertical-alignment: center;
+        single-line: !root.multiline;
+        wrap: root.multiline ? word-wrap : no-wrap;
+        input-type: root.input-type;
+        selection-background-color: Pal.accent;
+        selection-foreground-color: Pal.on-accent;
+        accepted => { root.accepted(); }
+        edited => { root.edited(self.text); }
+        key-pressed(e) => {
+            if e.text == Key.Escape { Nav.escape(); return accept; }
+            if e.modifiers.control && (e.text == "n" || e.text == "N" || e.text == "t" || e.text == "T" || e.text == ",") {
+                Nav.shortcut(e.text.to-lowercase());
+                return accept;
+            }
+            reject
+        }
+    }
+}
+
+component Tab inherits Rectangle {
+    in property <string> label;
+    in property <int> count;
+    in property <bool> active;
+    in property <bool> alert: false;
+    callback clicked();
+    height: 26px;
+    border-radius: 13px;
+    background: active ? Pal.line : transparent;
+    accessible-role: tab;
+    accessible-label: label;
+    TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    HorizontalLayout {
+        alignment: center;
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 5px;
+        Text {
+            text: root.label;
+            color: active ? Pal.fg : Pal.dim;
+            font-size: 12px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        if root.count > 0: Text {
+            text: root.count;
+            color: root.alert ? Pal.danger : Pal.dim;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component Row inherits Rectangle {
+    in property <TaskRow> t;
+    in property <bool> confirming;
+    callback toggled();
+    callback edit();
+    callback focus-task();
+    callback ask-delete();
+    callback confirm-delete();
+    callback cancel-delete();
+    height: 40px;
+    border-radius: 10px;
+    background: area.has-hover ? Pal.panel : transparent;
+    area := TouchArea { }
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 4px;
+        spacing: 8px;
+        alignment: stretch;
+        Check { y: 10px; on: t.done; toggled => { root.toggled(); } }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            Text {
+                text: t.title;
+                color: t.done ? Pal.dim : Pal.fg;
+                font-size: 13px;
+                overflow: elide;
+            }
+            if t.due != "": Text {
+                text: t.due;
+                color: t.overdue && !t.done ? Pal.danger : Pal.dim;
+                font-size: 11px;
+                overflow: elide;
+            }
+        }
+        if t.priority > 0 && !t.done: Rectangle {
+            y: 16px;
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            background: t.priority == 3 ? Pal.danger : t.priority == 2 ? Pal.warn : Pal.dim;
+            accessible-role: none;
+        }
+    }
+    // Hover actions sit over the end of the row so the title keeps its full width otherwise.
+    actions := Rectangle {
+        property <bool> shown: !root.confirming && (area.has-hover || b-focus.hovered || b-edit.hovered || b-del.hovered);
+        x: parent.width - self.width - 2px;
+        width: 88px;
+        height: parent.height;
+        border-radius: 10px;
+        background: Pal.panel;
+        visible: shown;
+        HorizontalLayout {
+            alignment: end;
+            spacing: 0px;
+            b-focus := IconButton { y: 6px; kind: 5; tip: "Focus on this task"; clicked => { root.focus-task(); } }
+            b-edit := IconButton { y: 6px; kind: 3; tip: "Edit task"; clicked => { root.edit(); } }
+            b-del := IconButton { y: 6px; kind: 4; tip: "Delete task"; clicked => { root.ask-delete(); } }
+        }
+    }
+    if root.confirming: Rectangle {
+        x: parent.width - self.width - 2px;
+        width: 126px;
+        height: parent.height;
+        border-radius: 10px;
+        background: Pal.panel;
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: end;
+            padding-right: 4px;
+            Press { y: 6px; label: "Delete"; fill: Pal.danger; ink: #ffffff; strong: true; width: 56px; clicked => { root.confirm-delete(); } }
+            Press { y: 6px; label: "Keep"; width: 48px; clicked => { root.cancel-delete(); } }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    // ---- state from Rust -----------------------------------------------------------------
+    // 0 collapsed, 1 expanded, 2 reminder, 3 settings, 4 edit
+    in property <int> mode: 0;
+    in property <string> pill-text;
+    // 0 idle, 1 next task, 2 timer running, 3 overdue, 4 timer paused/finished
+    in property <int> pill-kind;
+    in property <string> clock-text;
+    in property <string> date-text;
+    in property <[TaskRow]> tasks;
+    in property <int> view: 0;
+    in property <int> n-today;
+    in property <int> n-upcoming;
+    in property <int> n-overdue;
+    in property <string> error-text;
+    in property <string> info-text;
+    in property <bool> persistent: true;
+    in property <bool> on-top: true;
+    in property <int> confirm-id: -1;
+
+    // timer
+    in property <int> timer-state; // 0 idle, 1 running, 2 paused, 3 finished
+    in property <string> timer-text: "25:00";
+    in property <float> timer-progress: 0;
+    in property <int> timer-minutes: 25;
+    in property <string> timer-task: "";
+
+    // reminder
+    in property <string> rem-title;
+    in property <string> rem-time;
+    in property <string> rem-more;
+    in property <int> snooze-minutes: 10;
+    in property <bool> rem-is-focus: false;
+    in property <bool> rem-can-complete: true;
+
+    // edit form
+    in-out property <string> edit-title;
+    in-out property <string> edit-notes;
+    in-out property <string> edit-date;
+    in-out property <string> edit-time;
+    in-out property <int> edit-priority;
+    in-out property <bool> edit-reminder;
+    in-out property <int> edit-lead;
+    in property <string> edit-error;
+
+    // settings
+    in-out property <bool> s-startup;
+    in-out property <bool> s-collapsed;
+    in-out property <bool> s-top;
+    in-out property <bool> s-sound;
+    in-out property <bool> s-focus-steal;
+    in-out property <bool> s-clock24;
+    in-out property <bool> s-contrast;
+    in-out property <bool> s-wake;
+    in-out property <int> s-theme;
+    in-out property <int> s-focus-min;
+    in-out property <int> s-snooze-min;
+    in property <string> s-note;
+
+    // ---- actions to Rust ----------------------------------------------------------------
+    callback expand();
+    callback collapse();
+    callback open-settings();
+    callback close-settings();
+    callback quick-add(string);
+    callback toggle-done(int, bool);
+    callback ask-delete(int);
+    callback confirm-delete(int);
+    callback cancel-delete();
+    callback begin-edit(int);
+    callback save-edit();
+    callback cancel-edit();
+    callback set-view(int);
+    callback timer-start();
+    callback timer-pause();
+    callback timer-resume();
+    callback timer-reset();
+    callback timer-preset(int);
+    callback timer-custom(string);
+    callback timer-attach(int);
+    callback rem-complete();
+    callback rem-snooze();
+    callback rem-dismiss();
+    callback setting-changed();
+    callback export-data();
+    callback reset-position();
+    callback quit-app();
+    callback drag-window();
+    callback dismiss-error();
+
+    public function focus-add() { add-field.focus-field(); }
+
+    // ---- geometry ---------------------------------------------------------------------------
+    property <length> island-w: mode == 0 ? (pill-kind == 0 ? 168px : 236px) : 400px;
+    property <length> island-h: mode == 0 ? 34px : mode == 2 ? 156px : 520px;
+    property <length> island-r: mode == 0 ? 17px : mode == 2 ? 30px : 30px;
+    property <bool> open: mode != 0;
+
+    // The native window follows the island, with a margin for the soft shadow.
+    width: 424px;
+    height: island-h + 18px;
+    no-frame: true;
+    background: transparent;
+    always-on-top: on-top;
+    title: "Focus Island";
+    default-font-family: "Segoe UI";
+    default-font-size: 13px;
+
+    // Keep keyboard focus somewhere sensible after every mode change (inside this window only;
+    // this never takes focus from another application).
+    changed mode => {
+        if self.mode == 4 { title-field.focus-field(); }
+        else { root-scope.focus(); }
+    }
+
+    root-scope := FocusScope {
+        key-pressed(e) => {
+            if e.text == Key.Escape { Nav.escape(); return accept; }
+            if e.modifiers.control && (e.text == "n" || e.text == "N" || e.text == "t" || e.text == "T" || e.text == ",") {
+                Nav.shortcut(e.text.to-lowercase());
+                return accept;
+            }
+            reject
+        }
+
+        island := Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: 6px;
+            width: root.island-w;
+            height: root.island-h;
+            border-radius: root.island-r;
+            background: Pal.bg;
+            border-width: Pal.border == transparent ? 0px : 1px;
+            border-color: Pal.border;
+            clip: true;
+            drop-shadow-blur: 10px;
+            drop-shadow-color: #00000066;
+            drop-shadow-offset-y: 2px;
+            animate width, height, border-radius {
+                duration: 200ms;
+                easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+            }
+
+            // ---- collapsed pill ------------------------------------------------------------
+            pill := Rectangle {
+                width: parent.width;
+                height: 34px;
+                opacity: root.mode == 0 ? 1 : 0;
+                visible: self.opacity > 0.01;
+                animate opacity { duration: 120ms; }
+                accessible-role: button;
+                accessible-label: "Open Focus Island. " + root.pill-text;
+                pill-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.expand(); }
+                    moved => {
+                        if self.pressed && (abs(self.mouse-x - self.pressed-x) > 6px || abs(self.mouse-y - self.pressed-y) > 6px) {
+                            root.drag-window();
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    spacing: 8px;
+                    alignment: center;
+                    Rectangle {
+                        width: 8px;
+                        height: 8px;
+                        y: 13px;
+                        border-radius: 4px;
+                        background: root.pill-kind == 2 ? Pal.ok
+                            : root.pill-kind == 3 ? Pal.danger
+                            : root.pill-kind == 4 ? Pal.warn
+                            : root.pill-kind == 1 ? Pal.accent
+                            : Pal.dim;
+                    }
+                    Text {
+                        text: root.pill-text;
+                        color: Pal.fg;
+                        font-size: 12px;
+                        font-weight: 500;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                }
+            }
+
+            // ---- reminder banner -------------------------------------------------------------
+            reminder := Rectangle {
+                width: parent.width;
+                height: 156px;
+                opacity: root.mode == 2 ? 1 : 0;
+                visible: self.opacity > 0.01;
+                animate opacity { duration: 140ms; }
+                VerticalLayout {
+                    padding: 18px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Rectangle { width: 8px; height: 8px; y: 5px; border-radius: 4px; background: root.rem-is-focus ? Pal.ok : Pal.warn; }
+                        Text { text: root.rem-is-focus ? "Focus" : "Reminder"; color: root.rem-is-focus ? Pal.ok : Pal.warn; font-size: 12px; font-weight: 700; horizontal-stretch: 1; }
+                        Text { text: root.rem-more; color: Pal.dim; font-size: 11px; }
+                    }
+                    Text { text: root.rem-title; color: Pal.fg; font-size: 17px; font-weight: 600; overflow: elide; wrap: no-wrap; }
+                    Text { text: root.rem-time; color: Pal.dim; font-size: 12px; }
+                    Rectangle { vertical-stretch: 1; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        if root.rem-can-complete: Press { label: root.rem-is-focus ? "Complete task" : "Complete"; fill: Pal.accent; ink: Pal.on-accent; strong: true; clicked => { root.rem-complete(); } }
+                        if !root.rem-is-focus: Press { label: "Snooze " + root.snooze-minutes + " min"; clicked => { root.rem-snooze(); } }
+                        Press { label: root.rem-is-focus ? "OK" : "Dismiss"; fill: root.rem-is-focus && !root.rem-can-complete ? Pal.accent : transparent; ink: root.rem-is-focus && !root.rem-can-complete ? Pal.on-accent : Pal.dim; clicked => { root.rem-dismiss(); } }
+                    }
+                }
+            }
+
+            // ---- expanded panel -------------------------------------------------------------------
+            panel := Rectangle {
+                width: parent.width;
+                height: 520px;
+                opacity: (root.mode == 1) ? 1 : 0;
+                visible: self.opacity > 0.01;
+                animate opacity { duration: 140ms; }
+
+                VerticalLayout {
+                    padding: 16px;
+                    padding-top: 12px;
+                    spacing: 10px;
+
+                    // header (also the drag handle)
+                    Rectangle {
+                        height: 28px;
+                        TouchArea {
+                            moved => {
+                                if self.pressed && (abs(self.mouse-x - self.pressed-x) > 6px || abs(self.mouse-y - self.pressed-y) > 6px) {
+                                    root.drag-window();
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 2px;
+                            Text {
+                                text: root.date-text + "  ·  " + root.clock-text;
+                                color: Pal.fg;
+                                font-size: 14px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            IconButton { kind: 0; tip: "Settings (Ctrl+,)"; clicked => { root.open-settings(); } }
+                            IconButton { kind: 1; tip: "Collapse (Esc)"; clicked => { root.collapse(); } }
+                        }
+                    }
+
+                    if root.error-text != "": Rectangle {
+                        height: 32px;
+                        border-radius: 10px;
+                        background: Pal.danger.with-alpha(0.18);
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            spacing: 6px;
+                            Text { text: root.error-text; color: Pal.danger; font-size: 12px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                            IconButton { kind: 2; tip: "Dismiss message"; clicked => { root.dismiss-error(); } }
+                        }
+                    }
+                    if root.info-text != "" && root.error-text == "": Rectangle {
+                        height: 32px;
+                        border-radius: 10px;
+                        background: Pal.accent.with-alpha(0.16);
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            spacing: 6px;
+                            Text { text: root.info-text; color: Pal.fg; font-size: 12px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                            IconButton { kind: 2; tip: "Dismiss message"; clicked => { root.dismiss-error(); } }
+                        }
+                    }
+
+                    // focus timer
+                    Rectangle {
+                        height: root.timer-state == 0 ? 78px : 92px;
+                        border-radius: 16px;
+                        background: Pal.panel;
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 8px;
+                            if root.timer-state == 0: HorizontalLayout {
+                                spacing: 6px;
+                                Text { text: "Focus"; color: Pal.dim; font-size: 12px; font-weight: 600; vertical-alignment: center; width: 40px; }
+                                Press { label: "25"; fill: root.timer-minutes == 25 ? Pal.accent : Pal.line; ink: root.timer-minutes == 25 ? Pal.on-accent : Pal.fg; width: 40px; clicked => { root.timer-preset(25); } }
+                                Press { label: "50"; fill: root.timer-minutes == 50 ? Pal.accent : Pal.line; ink: root.timer-minutes == 50 ? Pal.on-accent : Pal.fg; width: 40px; clicked => { root.timer-preset(50); } }
+                                custom := Field {
+                                    placeholder: "min";
+                                    fill: Pal.line;
+                                    y: 0px;
+                                    width: 56px;
+                                    input-type: InputType.number;
+                                    accepted => { root.timer-custom(self.text); }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                Press { label: "Start " + root.timer-minutes + " min"; fill: Pal.accent; ink: Pal.on-accent; strong: true; width: 104px; clicked => {
+                                    if custom.text != "" { root.timer-custom(custom.text); }
+                                    root.timer-start();
+                                } }
+                            }
+                            if root.timer-state == 0: Text {
+                                text: root.timer-task == "" ? "Tip: hover a task and press the clock to link a session." : "Linked: " + root.timer-task;
+                                color: Pal.dim;
+                                font-size: 11px;
+                                overflow: elide;
+                            }
+                            if root.timer-state != 0: HorizontalLayout {
+                                spacing: 8px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    Text {
+                                        text: root.timer-text;
+                                        color: root.timer-state == 3 ? Pal.ok : Pal.fg;
+                                        font-size: 30px;
+                                        font-weight: 300;
+                                    }
+                                    Text {
+                                        text: root.timer-state == 3 ? "Session complete" : root.timer-state == 2 ? "Paused" : (root.timer-task == "" ? "Focusing" : root.timer-task);
+                                        color: Pal.dim;
+                                        font-size: 11px;
+                                        overflow: elide;
+                                    }
+                                }
+                                if root.timer-state == 1: Press { y: 20px; label: "Pause"; width: 60px; clicked => { root.timer-pause(); } }
+                                if root.timer-state == 2: Press { y: 20px; label: "Resume"; fill: Pal.accent; ink: Pal.on-accent; strong: true; width: 66px; clicked => { root.timer-resume(); } }
+                                Press { y: 20px; label: root.timer-state == 3 ? "Done" : "Reset"; width: 54px; clicked => { root.timer-reset(); } }
+                            }
+                            if root.timer-state != 0: Rectangle {
+                                height: 3px;
+                                border-radius: 1.5px;
+                                background: Pal.line;
+                                Rectangle {
+                                    x: 0px;
+                                    width: parent.width * root.timer-progress;
+                                    height: parent.height;
+                                    border-radius: 1.5px;
+                                    background: root.timer-state == 3 ? Pal.ok : Pal.accent;
+                                }
+                            }
+                        }
+                    }
+
+                    // quick add
+                    add-field := Field {
+                        placeholder: "Add a task…  e.g. Call mom @15:30 !!";
+                        accepted => {
+                            if self.text != "" {
+                                root.quick-add(self.text);
+                                self.text = "";
+                            }
+                        }
+                    }
+
+                    // tabs
+                    HorizontalLayout {
+                        spacing: 4px;
+                        Tab { label: "Today"; count: root.n-today; active: root.view == 0; clicked => { root.set-view(0); } }
+                        Tab { label: "Upcoming"; count: root.n-upcoming; active: root.view == 1; clicked => { root.set-view(1); } }
+                        Tab { label: "Overdue"; count: root.n-overdue; alert: true; active: root.view == 2; clicked => { root.set-view(2); } }
+                    }
+
+                    // list
+                    Rectangle {
+                        vertical-stretch: 1;
+                        clip: true;
+                        flick := Flickable {
+                            content-height: list.preferred-height;
+                            list := VerticalLayout {
+                                spacing: 2px;
+                                alignment: start;
+                                for t in root.tasks: Row {
+                                    t: t;
+                                    confirming: root.confirm-id == t.id;
+                                    toggled => { root.toggle-done(t.id, !t.done); }
+                                    edit => { root.begin-edit(t.id); }
+                                    focus-task => { root.timer-attach(t.id); }
+                                    ask-delete => { root.ask-delete(t.id); }
+                                    confirm-delete => { root.confirm-delete(t.id); }
+                                    cancel-delete => { root.cancel-delete(); }
+                                }
+                            }
+                        }
+                        if root.tasks.length == 0: VerticalLayout {
+                            alignment: center;
+                            spacing: 4px;
+                            Text {
+                                text: !root.persistent ? "Storage unavailable"
+                                    : root.view == 0 ? "Nothing planned for today"
+                                    : root.view == 1 ? "Nothing upcoming"
+                                    : "Nothing overdue";
+                                color: Pal.fg;
+                                font-size: 14px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                            }
+                            Text {
+                                text: !root.persistent ? "Changes in this session will not be saved."
+                                    : root.view == 0 ? "Add a task above, or press Ctrl+N."
+                                    : root.view == 1 ? "Tasks with a later due date show up here."
+                                    : "You're all caught up.";
+                                color: Pal.dim;
+                                font-size: 12px;
+                                horizontal-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---- task editor ------------------------------------------------------------------------
+            editor := Rectangle {
+                width: parent.width;
+                height: 520px;
+                opacity: root.mode == 4 ? 1 : 0;
+                visible: self.opacity > 0.01;
+                animate opacity { duration: 140ms; }
+                VerticalLayout {
+                    padding: 18px;
+                    spacing: 9px;
+                    HorizontalLayout {
+                        Text { text: "Edit task"; color: Pal.fg; font-size: 15px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                        IconButton { kind: 2; tip: "Cancel (Esc)"; clicked => { root.cancel-edit(); } }
+                    }
+                    title-field := Field { placeholder: "Title"; text <=> root.edit-title; accepted => { root.save-edit(); } }
+                    Field { placeholder: "Notes (optional)"; text <=> root.edit-notes; multiline: true; min-height: 72px; max-height: 72px; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Field { placeholder: "Date  YYYY-MM-DD"; text <=> root.edit-date; horizontal-stretch: 2; }
+                        Field { placeholder: "Time  HH:MM"; text <=> root.edit-time; horizontal-stretch: 1; }
+                    }
+                    Text { text: "Priority"; color: Pal.dim; font-size: 11px; font-weight: 600; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        for p[i] in ["None", "Low", "Medium", "High"]: Press {
+                            label: p;
+                            fill: root.edit-priority == i ? Pal.accent : Pal.panel;
+                            ink: root.edit-priority == i ? Pal.on-accent : Pal.fg;
+                            clicked => { root.edit-priority = i; }
+                        }
+                    }
+                    Toggle { label: "Remind me"; on <=> root.edit-reminder; }
+                    if root.edit-reminder: HorizontalLayout {
+                        spacing: 6px;
+                        Text { text: "Before due"; color: Pal.dim; font-size: 12px; vertical-alignment: center; width: 76px; }
+                        for m[i] in [0, 5, 15, 30, 60]: Press {
+                            label: m == 0 ? "At time" : m + " min";
+                            fill: root.edit-lead == m ? Pal.accent : Pal.panel;
+                            ink: root.edit-lead == m ? Pal.on-accent : Pal.fg;
+                            clicked => { root.edit-lead = m; }
+                        }
+                    }
+                    if root.edit-error != "": Text { text: root.edit-error; color: Pal.danger; font-size: 12px; wrap: word-wrap; }
+                    Rectangle { vertical-stretch: 1; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: end;
+                        Press { label: "Cancel"; width: 80px; clicked => { root.cancel-edit(); } }
+                        Press { label: "Save"; fill: Pal.accent; ink: Pal.on-accent; strong: true; width: 80px; clicked => { root.save-edit(); } }
+                    }
+                }
+            }
+
+            // ---- settings ----------------------------------------------------------------------------
+            settings := Rectangle {
+                width: parent.width;
+                height: 520px;
+                opacity: root.mode == 3 ? 1 : 0;
+                visible: self.opacity > 0.01;
+                animate opacity { duration: 140ms; }
+                VerticalLayout {
+                    padding: 18px;
+                    padding-bottom: 14px;
+                    spacing: 6px;
+                    HorizontalLayout {
+                        Text { text: "Settings"; color: Pal.fg; font-size: 15px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                        IconButton { kind: 2; tip: "Close settings (Esc)"; clicked => { root.close-settings(); } }
+                    }
+                    Flickable {
+                        content-height: sl.preferred-height;
+                        sl := VerticalLayout {
+                            spacing: 2px;
+                            alignment: start;
+                            Toggle { label: "Launch when Windows starts"; on <=> root.s-startup; toggled => { root.setting-changed(); } }
+                            Toggle { label: "Start collapsed"; on <=> root.s-collapsed; toggled => { root.setting-changed(); } }
+                            Toggle { label: "Always on top"; on <=> root.s-top; toggled => { root.setting-changed(); } }
+                            Toggle { label: "Reminder sound"; on <=> root.s-sound; toggled => { root.setting-changed(); } }
+                            Toggle { label: "Reminders may take keyboard focus"; on <=> root.s-focus-steal; toggled => { root.setting-changed(); } }
+                            Toggle { label: "24-hour clock"; on <=> root.s-clock24; toggled => { root.setting-changed(); } }
+                            Toggle { label: "High contrast"; on <=> root.s-contrast; toggled => { root.setting-changed(); } }
+                            Toggle { label: "Start app at next reminder (Task Scheduler)"; on <=> root.s-wake; toggled => { root.setting-changed(); } }
+                            Rectangle { height: 6px; }
+                            Text { text: "Theme"; color: Pal.dim; font-size: 11px; font-weight: 600; }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                for n[i] in ["Black", "Graphite", "Light"]: Press {
+                                    label: n;
+                                    fill: root.s-theme == i ? Pal.accent : Pal.panel;
+                                    ink: root.s-theme == i ? Pal.on-accent : Pal.fg;
+                                    clicked => { root.s-theme = i; root.setting-changed(); }
+                                }
+                            }
+                            Rectangle { height: 6px; }
+                            Text { text: "Default focus length (minutes)"; color: Pal.dim; font-size: 11px; font-weight: 600; }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                for m in [15, 25, 45, 50, 90]: Press {
+                                    label: m;
+                                    fill: root.s-focus-min == m ? Pal.accent : Pal.panel;
+                                    ink: root.s-focus-min == m ? Pal.on-accent : Pal.fg;
+                                    clicked => { root.s-focus-min = m; root.setting-changed(); }
+                                }
+                            }
+                            Rectangle { height: 6px; }
+                            Text { text: "Snooze length (minutes)"; color: Pal.dim; font-size: 11px; font-weight: 600; }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                for m in [5, 10, 15, 30, 60]: Press {
+                                    label: m;
+                                    fill: root.s-snooze-min == m ? Pal.accent : Pal.panel;
+                                    ink: root.s-snooze-min == m ? Pal.on-accent : Pal.fg;
+                                    clicked => { root.s-snooze-min = m; root.setting-changed(); }
+                                }
+                            }
+                            Rectangle { height: 10px; }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Press { label: "Export / back up…"; clicked => { root.export-data(); } }
+                                Press { label: "Reset position"; clicked => { root.reset-position(); } }
+                                Press { label: "Quit"; fill: Pal.danger.with-alpha(0.25); ink: Pal.danger; clicked => { root.quit-app(); } }
+                            }
+                            if root.s-note != "": Text { text: root.s-note; color: Pal.dim; font-size: 11px; wrap: word-wrap; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
