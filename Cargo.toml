@@ -1,0 +1,41 @@
+[package]
+name = "focus-island"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92"
+description = "A lightweight Dynamic-Island-style todo, reminder and focus timer for Windows"
+license = "MIT"
+publish = false
+
+[lib]
+name = "focus_island"
+path = "src/lib.rs"
+
+[[bin]]
+name = "focus-island"
+path = "src/main.rs"
+
+[features]
+# Both renderers are compiled in and chosen at launch:
+#   (default)             FemtoVG / OpenGL: draws the rounded, shadowed, transparent pill.
+#   --software-renderer   Slint's CPU renderer: far lower memory in our Linux measurements,
+#                         but its Win32 present path (softbuffer) may not honour per-pixel
+#                         alpha, so the corners/shadow could draw as a black rectangle.
+#                         Untested on Windows: try it and compare.
+default = ["slint/renderer-femtovg", "slint/renderer-software"]
+
+[dependencies]
+slint = { version = "=1.18.1", default-features = false, features = ["std", "backend-winit", "compat-1-2", "unstable-winit-030"] }
+rusqlite = { version = "=0.41.0", features = ["bundled"] }
+chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
+
+[build-dependencies]
+slint-build = "=1.18.1"
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false
